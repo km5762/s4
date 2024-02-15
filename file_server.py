@@ -5,17 +5,17 @@ from pathlib import Path
 
 app = FastAPI()
 
+root_path = os.getenv("ROOT")
+if root_path is None:
+    ROOT = Path("./root")
+else:
+    ROOT = Path(root_path)
+
 
 @app.get("/")
 def read_root():
-    root_path = os.getenv("ROOT")
-    if root_path is None:
-        root = Path("./root")
-    else:
-        root = Path(root_path)
-
     metadata = []
-    for bucket in root.iterdir():
+    for bucket in ROOT.iterdir():
         bucket_size = bucket.lstat().st_size
         creation_time = bucket.stat().st_ctime
         created_at = datetime.fromtimestamp(creation_time).strftime("%Y-%m-%d %H:%M:%S")
@@ -33,20 +33,24 @@ def read_root():
 
 @app.get("/{bucket_name}")
 def read_bucket(bucket_name):
-    bucket_names = os.listdir(bucket_name)
+    objects = Path(bucket_name)
+    if objects is None:
+        # bucket doesnt exist
+        return None
+    
+    objects = objects.iterdir()
 
     metadata = []
-    for bucket_name in bucket_names:
-        bucket_size = Path(bucket_name).lstat().st_size
-        # os.path.getsize(bucket_name)
-        creation_time = Path(bucket_name).stat().st_ctime
-        # os.path.getctime(bucket_name)
+    for object in objects:
+        object_size = object.lstat().st_size
+        creation_time = object.stat().st_ctime
         created_at = datetime.fromtimestamp(creation_time).strftime("%Y-%m-%d %H:%M:%S")
 
         metadata.append(
             {
-                "name": bucket_name,
-                "size": bucket_size,
+                "bucket_name" : bucket_name,
+                "name": object,
+                "size": object_size,
                 "created_at": created_at,
             }
         )
@@ -56,4 +60,15 @@ def read_bucket(bucket_name):
 
 @app.get("/{bucket_name}/{object_name}")
 def read_object(bucket_name, object_name):
-    return {"bucket_name": bucket_name, "object_name": object_name}
+    object = Path(bucket_name / object_name)
+    if object is None:
+        return None
+    
+    object_size = object.lstat().st_size
+    creation_time = object.stat().st_ctime
+    created_at = datetime.fromtimestamp(creation_time).strftime("%Y-%m-%d %H:%M:%S")
+    return {"bucket_name": bucket_name, "name": object_name, "size" : object_size, "created_at":created_at, "blob": None}
+
+
+def accessible_path(path: Path):
+    return ROOT < path
