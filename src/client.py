@@ -6,7 +6,7 @@ REST_URL = "http://127.0.0.1:8000"
 
 BUCKET_REGEX = re.compile(r"/\w+\/?$|\/$", re.I)
 FILENAME_REGEX = re.compile(r'filename="(.+)"')
-
+BANNED_CHARS_REGEX = re.compile(r"\/:*?\"<>\|")
 
 def main() -> None:
     while user_input := input("Enter command: "):
@@ -26,20 +26,23 @@ def handle_request(type: str, command: str):
     if not verify_input(command):
         print("Invalid route.")
         return
+    if command != "/":
+        if command.endswith("/"):
+            print(True)
+            command = command[:-1]
     if BUCKET_REGEX.match(command):
         handle_dir(type, command)
     else:
-        handle_blob(type, command)
+        handle_object(type, command)
 
 
 def handle_dir(type: str, command: str):
     r = httpx.request(type, f"{REST_URL}{command}")
-    print(f"Request url: {r.url}")
     print(r.json())
     pass
 
 
-def handle_blob(type: str, command: str):
+def handle_object(type: str, command: str):
     r = httpx.request(type, f"{REST_URL}{command}")
     if r.status_code == 200:
         filename = filename_from_content_disposition(

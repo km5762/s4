@@ -5,21 +5,19 @@ import os
 from datetime import datetime
 from pathlib import Path
 
+
 app = FastAPI()
 
-root_path = os.getenv("ROOT")
-if root_path is None:
-    ROOT = Path("./root")
-else:
-    ROOT = Path(root_path)
+
+ROOT = Path("../root")
+
+os.makedirs(ROOT, exist_ok=True)
 
 
 @app.get("/{bucket_name}/{object_name}")
 def read_object(bucket_name, object_name) -> FileResponse:
-    # file = Path(f"{ROOT}{os.path.sep}{bucket_name}{os.path.sep}{object_name}")
-    # if file.exists():
     return FileResponse(
-        f"{ROOT}{os.path.sep}{bucket_name}{os.path.sep}{object_name}",
+        f"{ROOT.resolve()}{os.path.sep}{bucket_name}{os.path.sep}{object_name}",
         filename=object_name,
     )
 
@@ -41,7 +39,6 @@ def read_bucket(bucket_name) -> list[Any] | None:
 
         metadata.append(
             {
-                "bucket_name": bucket_name,
                 "name": object,
                 "size": object_size,
                 "created_at": created_at,
@@ -49,6 +46,19 @@ def read_bucket(bucket_name) -> list[Any] | None:
         )
 
     return metadata
+
+
+@app.post("/{bucket_name}")
+def create_bucket(bucket_name):
+    file = Path(f"{ROOT.resolve()}{os.path.sep}{bucket_name}")
+    try:
+        file.mkdir()
+        return {"status": "ok", "message": f"Bucket made: {file.resolve()}"}
+    except FileExistsError as _:
+        return {
+            "status": "error",
+            "message": f"Bucket already exists at {file.resolve()}",
+        }
 
 
 @app.get("/")

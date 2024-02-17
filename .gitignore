@@ -3,3 +3,4 @@
 root/
 **__pycache__/
 *.pdf
+/out/
