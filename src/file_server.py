@@ -320,7 +320,7 @@ async def sync_changes():
                     payload = {"dir_name": bucket_name}
 
                     r = httpx.delete(
-                        target_file_server_url + os.path.sep + bucket_name,
+                        target_file_server_url + "/" + bucket_name,
                         headers=headers,
                     )
                     if r.status_code != 200:
