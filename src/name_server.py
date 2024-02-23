@@ -8,19 +8,19 @@ from pathlib import Path
 
 registries = []
 
-ROOT = Path(__file__).parent
+PARENT_DIR = Path(__file__).parent
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global registries
     try:
-        with open(f"{ROOT}{os.path.sep}registries.pk1", "rb") as file:
+        with open(f"{PARENT_DIR}{os.path.sep}registries.pk1", "rb") as file:
             registries = pickle.load(file)
     except Exception as e:
         print(e)
     yield
-    with open(f"{ROOT}{os.path.sep}registries.pk1", "wb") as file:
+    with open(f"{PARENT_DIR}{os.path.sep}registries.pk1", "wb") as file:
         pickle.dump(registries, file)
 
 
