@@ -6,13 +6,13 @@ from datetime import datetime
 from pathlib import Path
 from socket import gethostbyname, gethostname
 from typing import Any
-
+from fastapi.responses import JSONResponse
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile, BackgroundTasks
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from starlette.types import Receive, Scope, Send
+from Crypto.Cipher import AES
 
 app = FastAPI()
 
@@ -42,7 +42,7 @@ async def lifespan(app: FastAPI):
             journal = pickle.load(file)
     except OSError as e:
         print(e)
-    sync_changes()
+    await sync_changes()
     yield
     with open(f"{PARENT_DIR}{os.path.sep}journal.pk1", "wb") as file:
         pickle.dump(journal, file)
@@ -61,17 +61,27 @@ def secure_compare(val1: str, val2: str) -> bool:
 
 @app.middleware("http")
 async def check_authorization(request: Request, call_next):
-    auth = request.headers["Authorization"]
+    try:
+        auth = request.headers["Authorization"]
+    except KeyError:
+        return JSONResponse(
+            status_code=401, content={"error": "Authorization key not found"}
+        )
     if not secure_compare(auth, API_KEY):
-        return HTTPException(status_code=401, detail="Invalid Authorization")
+        return JSONResponse(
+            status_code=403, content={"error": "Authorization key not found"}
+        )
     response = await call_next(request)
     return response
 
 
 @app.get("/{bucket_name}/{object_name}")
 def read_object(bucket_name, object_name) -> FileResponse:
+    path = f"{ROOT_DIR.resolve()}{os.path.sep}{bucket_name}{os.path.sep}{object_name}"
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Object not found")
     return FileResponse(
-        f"{ROOT_DIR.resolve()}{os.path.sep}{bucket_name}{os.path.sep}{object_name}",
+        path,
         filename=object_name,
     )
 
@@ -80,8 +90,7 @@ def read_object(bucket_name, object_name) -> FileResponse:
 def read_bucket(bucket_name) -> list[Any] | None:
     objects = ROOT_DIR / Path(bucket_name)
     if objects is None:
-        # bucket doesnt exist
-        return None
+        raise HTTPException(status_code=404, detail="Bucket not found")
 
     objects = objects.iterdir()
 
@@ -122,14 +131,14 @@ def read_root() -> list[Any]:
 
 
 @app.post("/")
-def create_bucket(directory_name: DirectoryItem):
+def create_bucket(directory_name: DirectoryItem, background_tasks: BackgroundTasks):
     dir_path = Path(directory_name.dir_name)
     target_dir_path = ROOT_DIR / dir_path
     try:
         journal[target_dir_path] = "UPLOADING"
         target_dir_path.mkdir()
         journal[target_dir_path] = "UPLOADED"
-        sync_changes()
+        background_tasks.add_task(sync_changes)
         return {"status": "ok", "message": f"Bucket made: {target_dir_path.resolve()}"}
     except FileExistsError as _:
         return {
@@ -139,39 +148,82 @@ def create_bucket(directory_name: DirectoryItem):
 
 
 @app.post("/{bucket_name}")
-async def create_object(bucket_name, file: UploadFile = File(...)):
+async def create_object(
+    bucket_name, background_tasks: BackgroundTasks, file: UploadFile = File(...)
+):
     contents = await file.read()
     transferred_file_path = (
-        f"{ROOT_DIR}{os.path.sep}{bucket_name}{os.path.sep}{file.filename}"
+        f"{ROOT_DIR}{os.path.sep}{bucket_name}{os.path.sep}{file.filename}.enc"
     )
+
+    if not Path(transferred_file_path).parent.exists():
+        raise HTTPException(status_code=404, detail="Bucket not found")
 
     journal[transferred_file_path] = "UPLOADING"
     hasFileWriteErrored = False
 
+    (ciphertext, nonce, hmac) = encrypt_file(contents, bytes.fromhex(API_KEY))
+
     try:
         with open(transferred_file_path, "wb") as f:
-            f.write(contents)
+            f.write(hmac)
+            f.write(nonce)
+            f.write(ciphertext)
     except OSError:
         hasFileWriteErrored = True
 
     journal[transferred_file_path] = "UPLOADED"
-    sync_changes()
-
+    background_tasks.add_task(sync_changes)
+    # TODO http error when bucketname doesnt exist
     if hasFileWriteErrored:
         return {"status": "error", "filename": f"{transferred_file_path}"}
     else:
         return {"status": "ok", "filename": f"{transferred_file_path}"}
 
 
-def sync_changes():
+@app.delete("/{bucket_name}")
+def delete_bucket(bucket_name: str, background_tasks: BackgroundTasks):
+    bucket_path = ROOT_DIR / Path(bucket_name)
+    if not bucket_path.exists():
+        raise HTTPException(status_code=404, detail="Bucket not found")
+
+    try:
+        journal[bucket_path] = "DELETING"
+        bucket_path.rmdir()
+        journal[bucket_path] = "DELETED"
+        background_tasks.add_task(sync_changes)
+        return {"status": "ok", "message": f"Bucket deleted: {bucket_path.resolve()}"}
+    except OSError as e:
+        return {"status": "error", "message": f"Error deleting bucket: {str(e)}"}
+
+
+@app.delete("/{bucket_name}/{object_name}")
+def delete_object(
+    bucket_name: str, object_name: str, background_tasks: BackgroundTasks
+):
+    object_path = ROOT_DIR / Path(bucket_name) / Path(object_name)
+    if not object_path.exists():
+        raise HTTPException(status_code=404, detail="Object not found")
+
+    try:
+        journal[object_path] = "DELETING"
+        object_path.unlink()
+        journal[object_path] = "DELETED"
+        background_tasks.add_task(sync_changes)
+        return {"status": "ok", "message": f"Object deleted: {object_path.resolve()}"}
+    except OSError as e:
+        return {"status": "error", "message": f"Error deleting object: {str(e)}"}
+
+
+async def sync_changes():
     response = httpx.get(name_server_url)
     file_servers = response.json()
 
     changes_to_remove = []
-    allServersResponded = True
     # <path>: <status>
     for path in journal:
-        if journal[path] == "UPLOADED":
+        all_servers_ok = True
+        if journal[path] == "UPLOADED" or journal[path] == "DELETED":
             for file_server in file_servers:
                 if file_server["host"] == gethostbyname(gethostname()):
                     continue
@@ -179,30 +231,56 @@ def sync_changes():
                     url = f"http://{file_server['host']}:{file_server['port']}/"
                     if os.path.isdir(path):
                         # head, tail = os.path.split(path)
-                        payload = {"dir_name": Path(path).name}
-                        httpx.post(url, json=payload)
+                        bucket_name = Path(path).name
+                        payload = {"dir_name": bucket_name}
+
+                        if journal[path] == "DELETED":
+                            r = httpx.delete(url + os.path.sep + bucket_name)
+                            if r.status_code != 200:
+                                all_servers_ok = False
+                                break
+                        else:
+                            r = httpx.post(url, json=payload)
+                            if r.status_code != 200:
+                                all_servers_ok = False
+                                break
                     else:
+                        # del obj
                         file_path = Path(path)
                         bucket_path = file_path.parent
 
-                        # post to bucket to make sure it exists
-                        payload = {"dir_name": bucket_path.name}
-                        r = httpx.post(url, json=payload)
-                        if r.status_code == 200:
-                            url += bucket_path.name
+                        # # post to bucket to make sure it exists
+                        # payload = {"dir_name": bucket_path.name}
+                        # r = httpx.post(url, json=payload)
+                        url += bucket_path.name
+
+                        if journal[path] == "DELETED":
+                            r = httpx.delete(url + os.path.sep + file_path.name)
+                            if r.status_code != 200:
+                                all_servers_ok = False
+                                break
+                        else:
+                            # create obj
                             try:
                                 with open(Path(path), "rb") as f:
                                     files = {"file": f}
-                                    httpx.post(url, files=files)
+                                    r = httpx.post(url, files=files)
+                                    if r.status_code != 200:
+                                        all_servers_ok = False
+                                        break
                             except OSError as e:
                                 print(e)
-                        else:
-                            allServersResponded = False
-        if allServersResponded:
+        if all_servers_ok:
             changes_to_remove.append(path)
 
     for path in changes_to_remove:
         del journal[path]
+
+
+def encrypt_file(file_data, key):
+    cipher = AES.new(key, AES.MODE_GCM)
+    ciphertext, hmac = cipher.encrypt_and_digest(file_data)
+    return (ciphertext, cipher.nonce, hmac)
 
 
 def is_accessible_path(path: Path) -> bool:

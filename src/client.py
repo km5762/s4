@@ -2,6 +2,8 @@ import argparse
 import re
 import time
 from pathlib import Path
+from io import BytesIO
+from Crypto.Cipher import AES
 
 import httpx
 
@@ -98,7 +100,7 @@ def post_obj(server_side_path: str, local_path: str):
             else:
                 return r.content
         else:
-            return "Error with sending object"
+            return f"Error with sending object:\n{r.status_code}\n{r.text}"
 
 
 def handle_del(command: str):
@@ -113,12 +115,21 @@ def get_dir(command: str):
 def get_obj(command: str):
     r = httpx.get(f"{REST_URL}{command}", headers=headers)
     if r.status_code == 200:
+        print(f"{r.headers = }")
+        print(f"{r.text = }")
+        print(f"{r.content = }")
         filename = filename_from_content_disposition(
             r.headers.get("Content-Disposition")
         )
+        filename = filename[:-4]
         file_path = PARENT_DIR / Path(filename)
-        with open(file_path, "wb") as f:
-            f.write(r.content)
+        plaintext_contents = decrypt_file(
+            r.content, bytes.fromhex(headers["Authorization"])
+        )
+        if plaintext_contents is None:
+            return "Invalid encryption"
+        with open(file_path, "w") as f:
+            f.write(plaintext_contents)
         return f"Wrote {file_path}"
     else:
         return f"Download failed with status code {r.status_code}"
@@ -138,6 +149,21 @@ def filename_from_content_disposition(content: str | None):
             # TODO might have problems if returning more than one file
             return filename
     return str(time.time_ns())
+
+
+def decrypt_file(content, key):
+    try:
+        file = BytesIO(content)
+        file_view = file.getvalue()
+        hmac = file_view[0:16]
+        nonce = file_view[16:32]
+        ciphertext = file_view[32:]
+
+        cipher = AES.new(key, AES.MODE_GCM, nonce=nonce)
+        plain_text = cipher.decrypt_and_verify(ciphertext, hmac)
+        return plain_text.decode("utf-8")
+    except (ValueError, KeyError):
+        return None
 
 
 if __name__ == "__main__":
