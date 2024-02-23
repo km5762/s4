@@ -1,3 +1,4 @@
+from socket import gethostbyname, gethostname
 from typing import Any
 from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import FileResponse
@@ -154,6 +155,8 @@ def sync_changes():
     for path in journal:
         if journal[path] == "UPLOADED":
             for file_server in file_servers:
+                if file_server["host"] == gethostbyname(gethostname()):
+                    continue
                 if os.path.exists(path):
                     url = f"http://{file_server['host']}:{file_server['port']}/"
                     if os.path.isdir(path):
