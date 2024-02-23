@@ -164,8 +164,10 @@ async def create_object(
     do_sync = "X-Sync" in request.headers
     contents = await file.read()
     transferred_file_path = (
-        f"{ROOT_DIR}{os.path.sep}{bucket_name}{os.path.sep}{file.filename}.enc"
+        f"{ROOT_DIR}{os.path.sep}{bucket_name}{os.path.sep}{file.filename}"
     )
+    if not do_sync:
+        transferred_file_path += ".enc"
 
     if not Path(transferred_file_path).parent.exists():
         raise HTTPException(status_code=404, detail="Bucket not found")
