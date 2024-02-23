@@ -31,6 +31,8 @@ if not name_server_url:
 if not API_KEY:
     exit("Error: API_KEY environment variable is not set.")
 
+headers = {"Authorization": API_KEY}
+
 journal = {}
 
 
@@ -216,7 +218,7 @@ def delete_object(
 
 
 async def sync_changes():
-    response = httpx.get(name_server_url)
+    response = httpx.get(name_server_url, headers=headers)
     file_servers = response.json()
 
     changes_to_remove = []
@@ -235,12 +237,14 @@ async def sync_changes():
                         payload = {"dir_name": bucket_name}
 
                         if journal[path] == "DELETED":
-                            r = httpx.delete(url + os.path.sep + bucket_name)
+                            r = httpx.delete(
+                                url + os.path.sep + bucket_name, headers=headers
+                            )
                             if r.status_code != 200:
                                 all_servers_ok = False
                                 break
                         else:
-                            r = httpx.post(url, json=payload)
+                            r = httpx.post(url, json=payload, headers=headers)
                             if r.status_code != 200:
                                 all_servers_ok = False
                                 break
@@ -255,7 +259,9 @@ async def sync_changes():
                         url += bucket_path.name
 
                         if journal[path] == "DELETED":
-                            r = httpx.delete(url + os.path.sep + file_path.name)
+                            r = httpx.delete(
+                                url + os.path.sep + file_path.name, headers=headers
+                            )
                             if r.status_code != 200:
                                 all_servers_ok = False
                                 break
@@ -264,7 +270,7 @@ async def sync_changes():
                             try:
                                 with open(Path(path), "rb") as f:
                                     files = {"file": f}
-                                    r = httpx.post(url, files=files)
+                                    r = httpx.post(url, files=files, headers=headers)
                                     if r.status_code != 200:
                                         all_servers_ok = False
                                         break
