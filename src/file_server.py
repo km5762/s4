@@ -6,13 +6,13 @@ from datetime import datetime
 from pathlib import Path
 from socket import gethostbyname, gethostname
 from typing import Any
-from fastapi.responses import JSONResponse
+
 import httpx
-from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile, BackgroundTasks
-from fastapi.responses import FileResponse
-from pydantic import BaseModel
 from Crypto.Cipher import AES
+from dotenv import load_dotenv
+from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel
 
 app = FastAPI()
 
@@ -23,15 +23,15 @@ ROOT_DIR = PARENT_DIR / Path("root")
 os.makedirs(ROOT_DIR, exist_ok=True)
 
 load_dotenv()
-name_server_url = os.environ.get("NAME_SERVER_URL")
+NAME_SERVER_URL = os.environ.get("NAME_SERVER_URL")
 API_KEY = os.environ.get("API_KEY")
 
-if not name_server_url:
+if not NAME_SERVER_URL:
     exit("Error: NAME_SERVER environment variable is not set.")
 if not API_KEY:
     exit("Error: API_KEY environment variable is not set.")
 
-headers = {"Authorization": API_KEY}
+headers = {"Authorization": API_KEY, "X-Sync": "true"}
 
 journal = {}
 
@@ -133,14 +133,19 @@ def read_root() -> list[Any]:
 
 
 @app.post("/")
-def create_bucket(directory_name: DirectoryItem, background_tasks: BackgroundTasks):
+def create_bucket(
+    directory_name: DirectoryItem, background_tasks: BackgroundTasks, request: Request
+):
+    do_sync = "X-Sync" in request.headers
     dir_path = Path(directory_name.dir_name)
     target_dir_path = ROOT_DIR / dir_path
     try:
-        journal[target_dir_path] = "UPLOADING"
+        if not do_sync:
+            journal[target_dir_path] = "UPLOADING"
         target_dir_path.mkdir()
-        journal[target_dir_path] = "UPLOADED"
-        background_tasks.add_task(sync_changes)
+        if not do_sync:
+            journal[target_dir_path] = "UPLOADED"
+            background_tasks.add_task(sync_changes)
         return {"status": "ok", "message": f"Bucket made: {target_dir_path.resolve()}"}
     except FileExistsError as _:
         return {
@@ -151,8 +156,9 @@ def create_bucket(directory_name: DirectoryItem, background_tasks: BackgroundTas
 
 @app.post("/{bucket_name}")
 async def create_object(
-    bucket_name, background_tasks: BackgroundTasks, file: UploadFile = File(...)
+    bucket_name, background_tasks: BackgroundTasks, request: Request, file: UploadFile = File(...),
 ):
+    do_sync = "X-Sync" in request.headers
     contents = await file.read()
     transferred_file_path = (
         f"{ROOT_DIR}{os.path.sep}{bucket_name}{os.path.sep}{file.filename}.enc"
@@ -161,7 +167,8 @@ async def create_object(
     if not Path(transferred_file_path).parent.exists():
         raise HTTPException(status_code=404, detail="Bucket not found")
 
-    journal[transferred_file_path] = "UPLOADING"
+    if not do_sync:
+        journal[transferred_file_path] = "UPLOADING"
     hasFileWriteErrored = False
 
     (ciphertext, nonce, hmac) = encrypt_file(contents, bytes.fromhex(API_KEY))
@@ -174,8 +181,9 @@ async def create_object(
     except OSError:
         hasFileWriteErrored = True
 
-    journal[transferred_file_path] = "UPLOADED"
-    background_tasks.add_task(sync_changes)
+    if not do_sync:
+        journal[transferred_file_path] = "UPLOADED"
+        background_tasks.add_task(sync_changes)
     # TODO http error when bucketname doesnt exist
     if hasFileWriteErrored:
         return {"status": "error", "filename": f"{transferred_file_path}"}
@@ -184,16 +192,19 @@ async def create_object(
 
 
 @app.delete("/{bucket_name}")
-def delete_bucket(bucket_name: str, background_tasks: BackgroundTasks):
+def delete_bucket(bucket_name: str, background_tasks: BackgroundTasks, request: Request):
+    do_sync = "X-Sync" in request.headers
     bucket_path = ROOT_DIR / Path(bucket_name)
     if not bucket_path.exists():
         raise HTTPException(status_code=404, detail="Bucket not found")
 
     try:
-        journal[bucket_path] = "DELETING"
+        if not do_sync:
+            journal[bucket_path] = "DELETING"
         bucket_path.rmdir()
-        journal[bucket_path] = "DELETED"
-        background_tasks.add_task(sync_changes)
+        if not do_sync:
+            journal[bucket_path] = "DELETED"
+            background_tasks.add_task(sync_changes)
         return {"status": "ok", "message": f"Bucket deleted: {bucket_path.resolve()}"}
     except OSError as e:
         return {"status": "error", "message": f"Error deleting bucket: {str(e)}"}
@@ -201,36 +212,44 @@ def delete_bucket(bucket_name: str, background_tasks: BackgroundTasks):
 
 @app.delete("/{bucket_name}/{object_name}")
 def delete_object(
-    bucket_name: str, object_name: str, background_tasks: BackgroundTasks
+    bucket_name: str, object_name: str, background_tasks: BackgroundTasks, request: Request
 ):
+    do_sync = "X-Sync" in request.headers
     object_path = ROOT_DIR / Path(bucket_name) / Path(object_name)
     if not object_path.exists():
         raise HTTPException(status_code=404, detail="Object not found")
 
     try:
-        journal[object_path] = "DELETING"
+        if not do_sync:
+            journal[object_path] = "DELETING"
         object_path.unlink()
-        journal[object_path] = "DELETED"
-        background_tasks.add_task(sync_changes)
+        if not do_sync:
+            journal[object_path] = "DELETED"
+            background_tasks.add_task(sync_changes)
         return {"status": "ok", "message": f"Object deleted: {object_path.resolve()}"}
     except OSError as e:
         return {"status": "error", "message": f"Error deleting object: {str(e)}"}
 
 
 async def sync_changes():
-    response = httpx.get(name_server_url, headers=headers)
-    file_servers = response.json()
+    name_server_response = httpx.get(NAME_SERVER_URL, headers=headers)
+    file_servers = name_server_response.json()
 
     changes_to_remove = []
+    print(f"{len(journal) =}")
+    print(f"{len(file_servers) =}")
     # <path>: <status>
     for path in journal:
+        print(f"{len(changes_to_remove) =}")
         all_servers_ok = True
         if journal[path] == "UPLOADED" or journal[path] == "DELETED":
             for file_server in file_servers:
                 if file_server["host"] == gethostbyname(gethostname()):
                     continue
                 if os.path.exists(path):
-                    url = f"http://{file_server['host']}:{file_server['port']}/"
+                    target_file_server_url = (
+                        f"http://{file_server['host']}:{file_server['port']}/"
+                    )
                     if os.path.isdir(path):
                         # head, tail = os.path.split(path)
                         bucket_name = Path(path).name
@@ -238,13 +257,16 @@ async def sync_changes():
 
                         if journal[path] == "DELETED":
                             r = httpx.delete(
-                                url + os.path.sep + bucket_name, headers=headers
+                                target_file_server_url + os.path.sep + bucket_name,
+                                headers=headers,
                             )
                             if r.status_code != 200:
                                 all_servers_ok = False
                                 break
                         else:
-                            r = httpx.post(url, json=payload, headers=headers)
+                            r = httpx.post(
+                                target_file_server_url, json=payload, headers=headers
+                            )
                             if r.status_code != 200:
                                 all_servers_ok = False
                                 break
@@ -256,11 +278,12 @@ async def sync_changes():
                         # # post to bucket to make sure it exists
                         # payload = {"dir_name": bucket_path.name}
                         # r = httpx.post(url, json=payload)
-                        url += bucket_path.name
+                        target_file_server_url += bucket_path.name
 
                         if journal[path] == "DELETED":
                             r = httpx.delete(
-                                url + os.path.sep + file_path.name, headers=headers
+                                target_file_server_url + os.path.sep + file_path.name,
+                                headers=headers,
                             )
                             if r.status_code != 200:
                                 all_servers_ok = False
@@ -270,7 +293,11 @@ async def sync_changes():
                             try:
                                 with open(Path(path), "rb") as f:
                                     files = {"file": f}
-                                    r = httpx.post(url, files=files, headers=headers)
+                                    r = httpx.post(
+                                        target_file_server_url,
+                                        files=files,
+                                        headers=headers,
+                                    )
                                     if r.status_code != 200:
                                         all_servers_ok = False
                                         break
