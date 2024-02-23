@@ -240,6 +240,7 @@ def delete_object(
 
 
 async def sync_changes():
+    print("SYNC", flush=True)
     name_server_response = httpx.get(NAME_SERVER_URL, headers=headers)
     file_servers = name_server_response.json()
 
@@ -276,18 +277,16 @@ async def sync_changes():
                             all_servers_ok = False
                             break
                 else:
-                    # del obj
                     file_path = Path(path)
                     bucket_path = file_path.parent
 
-                    # # post to bucket to make sure it exists
-                    # payload = {"dir_name": bucket_path.name}
-                    # r = httpx.post(url, json=payload)
                     target_file_server_url += bucket_path.name
 
                     if journal[path] == "DELETED":
+                        thing = f"{target_file_server_url}/{file_path.name}"
+                        print(f"Delete hit: {thing}", flush=True)
                         r = httpx.delete(
-                            target_file_server_url + os.path.sep + file_path.name,
+                            thing,
                             headers=headers,
                         )
                         if r.status_code != 200:

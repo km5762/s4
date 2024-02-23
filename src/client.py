@@ -86,9 +86,9 @@ def handle_post(server_side_path: str, local_path: str):
 def handle_del(command: str):
     r = httpx.delete((f"{REST_URL}{command}"), headers=headers)
     if r.status_code == 200:
-        return r.json()
+        print(r.json())
     else:
-        return f"{r.status_code}: {r.content}"
+        print(f"{r.status_code}: {r.content}")
 
 
 def post_dir(server_side_path, local_path):
@@ -100,17 +100,20 @@ def post_dir(server_side_path, local_path):
 
 def post_obj(server_side_path: str, local_path: str):
     url = f"{REST_URL}{server_side_path}"
-    with open(local_path, "rb") as f:
-        files = {"file": f}
-        r = httpx.post(url, files=files, headers=headers)
-        if r.status_code == 200:
-            content_type = r.headers.get("Content-Type")
-            if "application/json" in content_type:
-                return r.json()
+    try:
+        with open(local_path, "rb") as f:
+            files = {"file": f}
+            r = httpx.post(url, files=files, headers=headers)
+            if r.status_code == 200:
+                content_type = r.headers.get("Content-Type")
+                if "application/json" in content_type:
+                    return r.json()
+                else:
+                    return r.content
             else:
-                return r.content
-        else:
-            return f"Error with sending object:\n{r.status_code}\n{r.text}"
+                return f"Error with sending object:\n{r.status_code}\n{r.text}"
+    except OSError:
+        return "File does not exist"
 
 
 def get_dir(command: str):
