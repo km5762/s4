@@ -242,7 +242,6 @@ def delete_object(
 
 
 async def sync_changes():
-    print("SYNC", flush=True)
     name_server_response = httpx.get(NAME_SERVER_URL, headers=headers)
     file_servers = name_server_response.json()
 
@@ -259,7 +258,6 @@ async def sync_changes():
                 target_file_server_url = (
                     f"http://{file_server['host']}:{file_server['port']}/"
                 )
-                print(path)
                 if os.path.isdir(path):
                     bucket_name = Path(path).name
                     payload = {"dir_name": bucket_name}
@@ -306,7 +304,6 @@ async def sync_changes():
                     target_file_server_url += bucket_path.name
 
                     thing = f"{target_file_server_url}/{imaginary_path.name}"
-                    print(f"Delete hit: {thing}", flush=True)
                     r = httpx.delete(
                         thing,
                         headers=headers,
@@ -320,7 +317,7 @@ async def sync_changes():
                     payload = {"dir_name": bucket_name}
 
                     r = httpx.delete(
-                        target_file_server_url + "/" + bucket_name,
+                        target_file_server_url + bucket_name,
                         headers=headers,
                     )
                     if r.status_code != 200:
