@@ -251,63 +251,63 @@ async def sync_changes():
             for file_server in file_servers:
                 if file_server["host"] == gethostbyname(gethostname()):
                     continue
-                if os.path.exists(path):
-                    target_file_server_url = (
-                        f"http://{file_server['host']}:{file_server['port']}/"
-                    )
-                    if os.path.isdir(path):
-                        # head, tail = os.path.split(path)
-                        bucket_name = Path(path).name
-                        payload = {"dir_name": bucket_name}
 
-                        if journal[path] == "DELETED":
-                            r = httpx.delete(
-                                target_file_server_url + os.path.sep + bucket_name,
-                                headers=headers,
-                            )
-                            if r.status_code != 200:
-                                all_servers_ok = False
-                                break
-                        else:
-                            r = httpx.post(
-                                target_file_server_url, json=payload, headers=headers
-                            )
-                            if r.status_code != 200:
-                                all_servers_ok = False
-                                break
+                target_file_server_url = (
+                    f"http://{file_server['host']}:{file_server['port']}/"
+                )
+                if os.path.isdir(path):
+                    # head, tail = os.path.split(path)
+                    bucket_name = Path(path).name
+                    payload = {"dir_name": bucket_name}
+
+                    if journal[path] == "DELETED":
+                        r = httpx.delete(
+                            target_file_server_url + os.path.sep + bucket_name,
+                            headers=headers,
+                        )
+                        if r.status_code != 200:
+                            all_servers_ok = False
+                            break
                     else:
-                        # del obj
-                        file_path = Path(path)
-                        bucket_path = file_path.parent
+                        r = httpx.post(
+                            target_file_server_url, json=payload, headers=headers
+                        )
+                        if r.status_code != 200:
+                            all_servers_ok = False
+                            break
+                else:
+                    # del obj
+                    file_path = Path(path)
+                    bucket_path = file_path.parent
 
-                        # # post to bucket to make sure it exists
-                        # payload = {"dir_name": bucket_path.name}
-                        # r = httpx.post(url, json=payload)
-                        target_file_server_url += bucket_path.name
+                    # # post to bucket to make sure it exists
+                    # payload = {"dir_name": bucket_path.name}
+                    # r = httpx.post(url, json=payload)
+                    target_file_server_url += bucket_path.name
 
-                        if journal[path] == "DELETED":
-                            r = httpx.delete(
-                                target_file_server_url + os.path.sep + file_path.name,
-                                headers=headers,
-                            )
-                            if r.status_code != 200:
-                                all_servers_ok = False
-                                break
-                        else:
-                            # create obj
-                            try:
-                                with open(Path(path), "rb") as f:
-                                    files = {"file": f}
-                                    r = httpx.post(
-                                        target_file_server_url,
-                                        files=files,
-                                        headers=headers,
-                                    )
-                                    if r.status_code != 200:
-                                        all_servers_ok = False
-                                        break
-                            except OSError as e:
-                                print(e)
+                    if journal[path] == "DELETED":
+                        r = httpx.delete(
+                            target_file_server_url + os.path.sep + file_path.name,
+                            headers=headers,
+                        )
+                        if r.status_code != 200:
+                            all_servers_ok = False
+                            break
+                    else:
+                        # create obj
+                        try:
+                            with open(Path(path), "rb") as f:
+                                files = {"file": f}
+                                r = httpx.post(
+                                    target_file_server_url,
+                                    files=files,
+                                    headers=headers,
+                                )
+                                if r.status_code != 200:
+                                    all_servers_ok = False
+                                    break
+                        except OSError as e:
+                            print(e)
         if all_servers_ok:
             changes_to_remove.append(path)
 

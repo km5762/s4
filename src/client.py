@@ -33,6 +33,8 @@ def main() -> None:
         # get /
         # post / test_dir
         # post /testdir ./test_upload.pdf
+        # delete /testdir/test_upload.pdf
+        user_input = user_input.strip()
         type = user_input.split(" ")[0]
         match type:
             case "exit":
@@ -119,9 +121,6 @@ def get_dir(command: str):
 def get_obj(command: str):
     r = httpx.get(f"{REST_URL}{command}", headers=headers)
     if r.status_code == 200:
-        print(f"{r.headers = }")
-        print(f"{r.text = }")
-        print(f"{r.content = }")
         filename = filename_from_content_disposition(
             r.headers.get("Content-Disposition")
         )
