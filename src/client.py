@@ -81,6 +81,14 @@ def handle_post(server_side_path: str, local_path: str):
         print(res)
 
 
+def handle_del(command: str):
+    r = httpx.delete((f"{REST_URL}{command}"), headers=headers)
+    if r.status_code == 200:
+        return r.json()
+    else:
+        return f"{r.status_code}: {r.content}"
+
+
 def post_dir(server_side_path, local_path):
     url = f"{REST_URL}{server_side_path}"
     req = {"dir_name": local_path}
@@ -101,10 +109,6 @@ def post_obj(server_side_path: str, local_path: str):
                 return r.content
         else:
             return f"Error with sending object:\n{r.status_code}\n{r.text}"
-
-
-def handle_del(command: str):
-    pass
 
 
 def get_dir(command: str):

@@ -156,7 +156,10 @@ def create_bucket(
 
 @app.post("/{bucket_name}")
 async def create_object(
-    bucket_name, background_tasks: BackgroundTasks, request: Request, file: UploadFile = File(...),
+    bucket_name,
+    background_tasks: BackgroundTasks,
+    request: Request,
+    file: UploadFile = File(...),
 ):
     do_sync = "X-Sync" in request.headers
     contents = await file.read()
@@ -192,7 +195,9 @@ async def create_object(
 
 
 @app.delete("/{bucket_name}")
-def delete_bucket(bucket_name: str, background_tasks: BackgroundTasks, request: Request):
+def delete_bucket(
+    bucket_name: str, background_tasks: BackgroundTasks, request: Request
+):
     do_sync = "X-Sync" in request.headers
     bucket_path = ROOT_DIR / Path(bucket_name)
     if not bucket_path.exists():
@@ -212,7 +217,10 @@ def delete_bucket(bucket_name: str, background_tasks: BackgroundTasks, request: 
 
 @app.delete("/{bucket_name}/{object_name}")
 def delete_object(
-    bucket_name: str, object_name: str, background_tasks: BackgroundTasks, request: Request
+    bucket_name: str,
+    object_name: str,
+    background_tasks: BackgroundTasks,
+    request: Request,
 ):
     do_sync = "X-Sync" in request.headers
     object_path = ROOT_DIR / Path(bucket_name) / Path(object_name)
@@ -236,11 +244,8 @@ async def sync_changes():
     file_servers = name_server_response.json()
 
     changes_to_remove = []
-    print(f"{len(journal) =}")
-    print(f"{len(file_servers) =}")
     # <path>: <status>
     for path in journal:
-        print(f"{len(changes_to_remove) =}")
         all_servers_ok = True
         if journal[path] == "UPLOADED" or journal[path] == "DELETED":
             for file_server in file_servers:
