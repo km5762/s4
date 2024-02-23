@@ -1,16 +1,18 @@
-from socket import gethostbyname, gethostname
-from typing import Any
-from fastapi import FastAPI, UploadFile, File
-from fastapi.responses import FileResponse
+import hmac
 import os
-from pydantic import BaseModel
+import pickle
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from dotenv import load_dotenv
-import httpx
-from contextlib import asynccontextmanager
-import pickle
+from socket import gethostbyname, gethostname
+from typing import Any
 
+import httpx
+from dotenv import load_dotenv
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
+from starlette.types import Receive, Scope, Send
 
 app = FastAPI()
 
@@ -22,9 +24,12 @@ os.makedirs(ROOT_DIR, exist_ok=True)
 
 load_dotenv()
 name_server_url = os.environ.get("NAME_SERVER_URL")
+API_KEY = os.environ.get("API_KEY")
 
 if not name_server_url:
     exit("Error: NAME_SERVER environment variable is not set.")
+if not API_KEY:
+    exit("Error: API_KEY environment variable is not set.")
 
 journal = {}
 
@@ -48,6 +53,19 @@ app = FastAPI(lifespan=lifespan)
 
 class DirectoryItem(BaseModel):
     dir_name: str
+
+
+def secure_compare(val1: str, val2: str) -> bool:
+    return hmac.compare_digest(val1.encode(), val2.encode())
+
+
+@app.middleware("http")
+async def check_authorization(request: Request, call_next):
+    auth = request.headers["Authorization"]
+    if not secure_compare(auth, API_KEY):
+        return HTTPException(status_code=401, detail="Invalid Authorization")
+    response = await call_next(request)
+    return response
 
 
 @app.get("/{bucket_name}/{object_name}")

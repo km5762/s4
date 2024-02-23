@@ -1,8 +1,9 @@
-import os
-import httpx
+import argparse
 import re
 import time
 from pathlib import Path
+
+import httpx
 
 REST_URL = "http://127.0.0.1:8231"
 
@@ -11,9 +12,21 @@ FILENAME_REGEX = re.compile(r'filename="(.+)"')
 BANNED_CHARS_REGEX = re.compile(r"\/:*?\"<>\|")
 
 PARENT_DIR = Path(__file__).parent
+headers = {}
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Script that requires an API key.")
+    parser.add_argument("--api_key", type=str, help="API key")
+
+    args = parser.parse_args()
+
+    if not args.api_key:
+        print("Error: API key is required.")
+        exit(1)
+    global headers
+    headers = {"Authorization": args.api_key}
+
     while user_input := input("Enter command: "):
         # get /
         # post / test_dir
@@ -69,7 +82,7 @@ def handle_post(server_side_path: str, local_path: str):
 def post_dir(server_side_path, local_path):
     url = f"{REST_URL}{server_side_path}"
     req = {"dir_name": local_path}
-    r = httpx.post(url, json=req)
+    r = httpx.post(url, json=req, headers=headers)
     return r.content
 
 
@@ -77,7 +90,7 @@ def post_obj(server_side_path: str, local_path: str):
     url = f"{REST_URL}{server_side_path}"
     with open(local_path, "rb") as f:
         files = {"file": f}
-        r = httpx.post(url, files=files)
+        r = httpx.post(url, files=files, headers=headers)
         if r.status_code == 200:
             content_type = r.headers.get("Content-Type")
             if "application/json" in content_type:
@@ -93,12 +106,12 @@ def handle_del(command: str):
 
 
 def get_dir(command: str):
-    r = httpx.get(f"{REST_URL}{command}")
+    r = httpx.get(f"{REST_URL}{command}", headers=headers)
     return r.json()
 
 
 def get_obj(command: str):
-    r = httpx.get(f"{REST_URL}{command}")
+    r = httpx.get(f"{REST_URL}{command}", headers=headers)
     if r.status_code == 200:
         filename = filename_from_content_disposition(
             r.headers.get("Content-Disposition")
